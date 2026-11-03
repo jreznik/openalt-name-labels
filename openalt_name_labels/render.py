@@ -42,6 +42,23 @@ def mm_to_dots(mm: float, dpi: int) -> int:
     return round(mm / 25.4 * dpi)
 
 
+@lru_cache(maxsize=8)
+def _cmap(path: str) -> frozenset[int]:
+    from fontTools.ttLib import TTFont
+
+    with TTFont(path, fontNumber=0, lazy=True) as tt:
+        return frozenset(tt.getBestCmap() or {})
+
+
+def missing_glyphs(name: str, font_path: str) -> list[str]:
+    """Characters of name the font cannot draw (they would silently print as nothing)."""
+    import unicodedata
+
+    cmap = _cmap(font_path)
+    return sorted({ch for ch in name if not ch.isspace() and ord(ch) not in cmap
+                   and unicodedata.category(ch) != "Mn"})
+
+
 @lru_cache(maxsize=512)
 def _font(path: str, size: int) -> ImageFont.FreeTypeFont:
     return ImageFont.truetype(path, size)
@@ -130,15 +147,27 @@ def render_fixed(name: str, width_mm: float, height_mm: float, dpi: int, font_pa
         f = _font(font_path, px)
         return max(f.getbbox(x, anchor="ms")[2] - f.getbbox(x, anchor="ms")[0] for x in lines)
 
+    v_safe = mm_to_dots(0.75, dpi)  # never let accents/descenders reach the label edge
+
+    def layout(px: int) -> tuple[ImageFont.FreeTypeFont, float, float]:
+        f = _font(font_path, px)
+        pitch = pt_to_dots(line_pt, dpi) * px / size
+        cap = -f.getbbox("H", anchor="ls")[1]
+        baseline = (h - (cap + pitch * (len(lines) - 1))) / 2 + cap
+        return f, pitch, baseline
+
+    def fits(px: int) -> bool:
+        if ink_w(px) > box_w:
+            return False
+        f, pitch, baseline = layout(px)
+        top = min(f.getbbox(x, anchor="ls")[1] + baseline + i * pitch for i, x in enumerate(lines))
+        bottom = max(f.getbbox(x, anchor="ls")[3] + baseline + i * pitch for i, x in enumerate(lines))
+        return top >= v_safe and bottom <= h - v_safe
+
     px = round(size)
-    while px > 1 and ink_w(px) > box_w:  # shrink only when a line is too wide
+    while px > 1 and not fits(px):  # shrink only when the name doesn't fit
         px -= 1
-    scale = px / size
-    font = _font(font_path, px)
-    pitch = pt_to_dots(line_pt, dpi) * min(1.0, scale)
-    cap = -font.getbbox("H", anchor="ls")[1]
-    block = cap + pitch * (len(lines) - 1)
-    baseline = (h - block) / 2 + cap
+    font, pitch, baseline = layout(px)
     img = Image.new("1", (w, h), 1)
     draw = ImageDraw.Draw(img)
     for i, line in enumerate(lines):

@@ -98,13 +98,59 @@ some-command | $L -f -                   # read names from stdin
 # Pretalx exports: speakers CSV/JSON, or the public schedule.json
 $L -f schedule.json
 
-# Pretalx API: all speakers of an event
-export PRETALX_TOKEN=xxxxxxxx            # pretalx → your user settings → API token
-$L --pretalx-event openalt-2026
-$L --pretalx-event myconf --pretalx-url https://pretalx.example.org   # self-hosted Pretalx
+# Pretalx API: speakers of confirmed and accepted talks (not rejected or withdrawn ones),
+# using the URL, event and token from openalt-name-labels.toml (see "Pretalx configuration")
+$L --pretalx --preview out/
+$L --pretalx
+$L --pretalx --pretalx-state confirmed     # confirmed talks only
+$L --pretalx-event other-event             # a different event than the config's
 ```
 
-You can combine sources: `$L -f speakers.csv "Extra Guest"`. Duplicate names (ignoring upper/lower case) are printed only once. For several copies of one name, use `--copies N`.
+You can combine sources: `$L -f speakers.csv "Extra Guest"`.
+
+**Before anything is sent, the tool checks:**
+- **Duplicates:** repeated names (ignoring upper/lower case) are printed once, and the skipped ones are listed. Use `--keep-duplicates` to print every repeat, e.g. three "Bezejmenný přednášející" placeholder badges.
+- **Missing characters:** if the font can't draw a character, such as Chinese, Arabic or emoji, the tool refuses to print that name rather than print it with the character silently missing. Fix the name, use `--font` with a font that has the characters, or pass `--force`.
+- **Printer state:** if the `XD5` printer is missing, disabled or rejecting jobs, the tool stops and tells you how to fix it.
+
+**Text clean-up:** accents that arrive as separate characters are joined back to their letters (Unicode NFC), so "Jiří" never prints as "Jiř̌", and invisible characters are removed. CSV/TXT files that aren't UTF-8 are read as Windows-1250, the usual encoding of Czech Excel exports, with a warning.
+
+**After sending,** the tool waits until CUPS has passed every label to the printer and shows printer messages such as "Waiting for printer to become available". Skip the wait with `--no-wait`.
+
+### On the conference day
+
+- **Install beforehand:** run `./setup.sh` before the event, because it needs internet access to install the dependencies. Printing itself works offline, except `--pretalx-event`.
+- **Preview first:** run once with `--preview out/` and look through the PNGs.
+- **Printed labels are numbered** in the listing. If the printer jams or runs out of labels partway through, fix it, then resume with `--start N`, where N is the first label that didn't print. To reprint single badges, just give the names: `$L "Jiří Rak"`.
+- **Extra copies:** use `--copies N`.
+
+### Pretalx configuration
+
+The Pretalx URL, event and **API token** live in **`openalt-name-labels.toml`** in the project folder. `setup.sh` creates it from [`openalt-name-labels.example.toml`](openalt-name-labels.example.toml):
+
+```toml
+[pretalx]
+url = "https://pretalx.com"      # your Pretalx instance
+event = "openalt-2026"           # event slug from the URL
+token = "…"                      # Pretalx → your user menu → API → token
+states = ["confirmed", "accepted"]
+```
+
+**Keeping the token private:**
+- **Git-ignored:** the file is never added to git, so it isn't pushed to GitHub.
+- **Pre-commit hook:** `setup.sh` turns on `.githooks/pre-commit`, which blocks a commit that adds this file (even with `git add -f`) or anything that looks like a token in another file. On a fresh clone, run `./setup.sh` before committing.
+- **Readable only by you:** the file is created with `chmod 600`, and the tool warns if other users can read it.
+- **Not on the command line:** the token is never taken as a command-line option, which would put it in shell history and the process list. It's also never printed.
+- **Without a token:** only public data is available, meaning confirmed talks in the published schedule.
+
+The tool looks for the config file in this order:
+1. `--config FILE`
+2. the `$OPENALT_LABELS_CONFIG` environment variable
+3. `./openalt-name-labels.toml` in the current folder
+4. `openalt-name-labels.toml` next to `setup.sh`
+5. `~/.config/openalt-name-labels/config.toml`
+
+The environment variables `PRETALX_URL` and `PRETALX_TOKEN`, and the options `--pretalx-url`, `--pretalx-event` and `--pretalx-state`, override the file. That's handy for a one-off run.
 
 ### Check before printing
 
@@ -132,6 +178,14 @@ $L -f speakers.csv --output out/all.zpl  # save the printer data to a file inste
 | `--speed` | printer setting | inches per second |
 | `--list-printers` | | show the printers set up in CUPS |
 | `--grid` | | print the mm ruler grid |
+| `--start N` | 1 | start at the N-th name, e.g. to resume after a jam |
+| `--keep-duplicates` | off | print repeated names every time |
+| `--pretalx` | | fetch speakers from Pretalx using the config file |
+| `--pretalx-event`, `--pretalx-url` | config file | override the config's event or URL |
+| `--pretalx-state` | config, else `confirmed,accepted` | which talk states get speaker labels |
+| `--config FILE` | see above | use this config file |
+| `--force` | off | print names even if the font lacks some of their characters |
+| `--no-wait` | off | don't wait for CUPS to finish the job |
 | `-y`, `--yes` | | print without asking |
 
 ---
@@ -146,7 +200,9 @@ $L -f speakers.csv --output out/all.zpl  # save the printer data to a file inste
 | Text cut off or off-centre | Print `--grid` and check the label edges. Then adjust `--width`, `--height` or `--offset-x`. |
 | Print runs over two labels, or the printer feeds without stopping | Calibrate (step 3 above). |
 | Too faint | Use `--darkness 20` or higher. |
-| Job sits in the queue | Run `lpstat -p XD5`. If the printer is paused, run `cupsenable XD5`. To cancel everything, run `cancel -a XD5`. |
+| "job … is still queued" | The printer is off, unplugged or out of labels. Fix it and the job continues by itself: `setup.sh` sets the queue to retry instead of stopping. `lpstat -p XD5` shows the state, and `cancel -a XD5` drops all jobs. |
+| "queue 'XD5' is disabled" | Run `cupsenable XD5 && cupsaccept XD5`. This happens with queues created without `setup.sh`, which stop after any error. |
+| Linux: `setup.sh` finds no printer, but `lsusb` shows it | Unplug and replug the printer. If `ipp-usb` is installed and has claimed the device, stop it: `sudo systemctl stop ipp-usb`. |
 
 ## How it works
 
@@ -156,7 +212,7 @@ $L -f speakers.csv --output out/all.zpl  # save the printer data to a file inste
 
 The print-area width is always set to the full 104 mm head, and the label's position is set explicitly. The XD5 centres any narrower print area on the head, which would shift the label sideways.
 
-Main files: `openalt_name_labels/` (`sources.py` input, `render.py` layout, `zpl.py`, `printer.py`), `cups/xd5-raw.ppd`, `setup.sh`.
+Main files: `openalt_name_labels/` (`sources.py` input, `config.py`, `render.py` layout, `zpl.py`, `printer.py`), `cups/xd5-raw.ppd`, `setup.sh`, `.githooks/pre-commit`.
 
 Run the tests with `.venv/bin/pip install -e '.[dev]' && .venv/bin/pytest`.
 

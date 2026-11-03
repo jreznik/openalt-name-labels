@@ -29,7 +29,7 @@ fail() { printf '\033[31merror:\033[0m %s\n' "$*" >&2; exit 1; }
 # --- 1. Python environment -------------------------------------------------
 PY="${PYTHON:-python3}"
 command -v "$PY" >/dev/null || fail "python3 not found. macOS: 'brew install python' / Linux: 'sudo apt install python3 python3-venv' or 'sudo dnf install python3'"
-"$PY" -c 'import sys; sys.exit(sys.version_info < (3, 10))' || fail "Python 3.10+ required (found $("$PY" -V))"
+"$PY" -c 'import sys; sys.exit(sys.version_info < (3, 10))' || fail "Python 3.10+ required (found $("$PY" -V)). On RHEL/Alma/Rocky 9: 'sudo dnf install python3.11', then run: PYTHON=python3.11 ./setup.sh"
 
 say "Creating .venv and installing openalt-name-labels"
 if [ ! -x .venv/bin/python ]; then
@@ -40,6 +40,19 @@ fi
 .venv/bin/openalt-name-labels --help >/dev/null
 say "Installed: $(pwd)/.venv/bin/openalt-name-labels"
 
+# Private config for Pretalx (token!). Git-ignored, readable only by you.
+if [ ! -f openalt-name-labels.toml ]; then
+  (umask 077 && cp openalt-name-labels.example.toml openalt-name-labels.toml)
+  say "Created openalt-name-labels.toml (chmod 600): put your Pretalx event and token there"
+else
+  chmod 600 openalt-name-labels.toml
+fi
+
+# Git safety net: block commits that contain the token.
+if [ -d .git ] && command -v git >/dev/null; then
+  git config core.hooksPath .githooks
+fi
+
 [ "$SETUP_PRINTER" = 1 ] || { say "Skipping printer setup (--no-printer)"; exit 0; }
 
 # --- 2. CUPS queue ----------------------------------------------------------
@@ -47,17 +60,24 @@ command -v lpadmin >/dev/null || fail "CUPS not found. Linux: 'sudo apt install 
 
 if [ -z "$URI" ]; then
   say "Looking for the Bixolon printer on USB (make sure it is plugged in and on)"
-  URI="$( (lpinfo -v 2>/dev/null || sudo lpinfo -v) | awk '/usb:\/\/BIXOLON/ {print $2; exit}')"
+  # Only probe USB (network discovery takes long). Linux often needs root for lpinfo.
+  URI="$( (lpinfo --include-schemes usb -v 2>/dev/null || sudo lpinfo --include-schemes usb -v) \
+          | awk '/usb:\/\/BIXOLON/ {print $2; exit}')"
   [ -n "$URI" ] || fail "No usb://BIXOLON/... device found. Check the cable/power, or pass --uri (see 'lpinfo -v')."
 fi
 say "Printer: $URI"
 
 say "Creating CUPS queue '$QUEUE' (raw ZPL passthrough)"
-LPADMIN=(lpadmin -p "$QUEUE" -E -v "$URI" -P cups/xd5-raw.ppd -D "Bixolon XD5 (raw ZPL)")
+# retry-job: after a USB hiccup / printer power-cycle, keep retrying instead of
+# stopping the queue (CUPS' default), which would silently hold every later job.
+OPTS=(-o printer-error-policy=retry-job -o printer-is-shared=false)
+LPADMIN=(lpadmin -p "$QUEUE" -E -v "$URI" -P cups/xd5-raw.ppd -D "Bixolon XD5 (raw ZPL)" "${OPTS[@]}")
+RAW=(lpadmin -p "$QUEUE" -E -v "$URI" -m raw -D "Bixolon XD5 (raw ZPL)" "${OPTS[@]}")
 # macOS admins can run lpadmin directly; Linux usually needs root or the lpadmin group.
 if ! "${LPADMIN[@]}" 2>/dev/null; then
   echo "    (needs administrator rights, asking for sudo)"
-  sudo "${LPADMIN[@]}"
+  # Fallback for CUPS builds without PPD support (Linux): a classic raw queue.
+  sudo "${LPADMIN[@]}" || sudo "${RAW[@]}" || fail "lpadmin failed; see the README troubleshooting section"
 fi
 cupsenable "$QUEUE" 2>/dev/null || sudo cupsenable "$QUEUE" 2>/dev/null || true
 cupsaccept "$QUEUE" 2>/dev/null || sudo cupsaccept "$QUEUE" 2>/dev/null || true

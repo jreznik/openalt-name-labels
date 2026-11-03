@@ -5,22 +5,51 @@ import csv
 import io
 import json
 import sys
+import unicodedata
 from pathlib import Path
 from typing import Any, Iterable
 
 NAME_COLUMNS = ("name", "jméno", "jmeno", "public_name", "full name", "fullname", "speaker", "speaker name", "attendee name")
 
 
-def clean(names: Iterable[str]) -> list[str]:
-    """Trim whitespace, collapse inner spaces, drop empties and duplicates (keep order)."""
+def normalize(name: str) -> str:
+    """NFC-normalise (so "i" + combining acute becomes "í" and renders correctly),
+    drop control/zero-width characters, and collapse whitespace."""
+    name = unicodedata.normalize("NFC", str(name))
+    name = "".join(ch for ch in name if unicodedata.category(ch) not in ("Cc", "Cf") or ch in "\t\n")
+    return " ".join(name.split())
+
+
+def clean(names: Iterable[str], keep_duplicates: bool = False) -> tuple[list[str], list[str]]:
+    """Normalise names and drop empties. Returns (names, dropped_duplicates).
+
+    Duplicates (case-insensitive) are dropped unless keep_duplicates is set;
+    the dropped ones are returned so the caller can report them.
+    """
     seen: set[str] = set()
     out: list[str] = []
+    dropped: list[str] = []
     for n in names:
-        n = " ".join(str(n).split())
-        if n and n.casefold() not in seen:
-            seen.add(n.casefold())
-            out.append(n)
-    return out
+        n = normalize(n)
+        if not n:
+            continue
+        if n.casefold() in seen and not keep_duplicates:
+            dropped.append(n)
+            continue
+        seen.add(n.casefold())
+        out.append(n)
+    return out, dropped
+
+
+def read_text(path: Path) -> str:
+    """UTF-8 (with or without BOM); fall back to Windows-1250 for Czech Excel exports."""
+    data = path.read_bytes()
+    try:
+        return data.decode("utf-8-sig")
+    except UnicodeDecodeError:
+        print(f"warning: {path} is not UTF-8, reading it as Windows-1250 (cp1250); "
+              "check the preview for wrong accents", file=sys.stderr)
+        return data.decode("cp1250")
 
 
 def from_text(text: str) -> list[str]:
@@ -66,7 +95,7 @@ def from_json_data(data: Any) -> list[str]:
             for talks in (day.get("rooms") or {}).values():
                 for talk in talks:
                     for sp in talk.get("persons", []) or talk.get("speakers", []):
-                        n = _speaker_name(sp) if isinstance(sp, dict) else sp
+                        n = _speaker_name(sp) if isinstance(sp, dict) else None
                         if n:
                             names.append(n)
         return names
@@ -80,8 +109,11 @@ def from_json_data(data: Any) -> list[str]:
             names.append(item)
         elif isinstance(item, dict):
             if isinstance(item.get("speakers"), list):  # submission with speakers
+                if item["speakers"] and not any(isinstance(sp, dict) for sp in item["speakers"]):
+                    raise ValueError("Submissions list speakers only as codes; export/fetch it "
+                                     "with expanded speakers (API: ?expand=speakers)")
                 for sp in item["speakers"]:
-                    n = _speaker_name(sp) if isinstance(sp, dict) else sp
+                    n = _speaker_name(sp) if isinstance(sp, dict) else None
                     if n:
                         names.append(n)
             else:
@@ -97,7 +129,7 @@ def from_file(path: str, column: str | None = None) -> list[str]:
         suffix = ""
     else:
         p = Path(path)
-        text = p.read_text(encoding="utf-8-sig")
+        text = read_text(p)
         suffix = p.suffix.lower()
     if suffix == ".json" or (not suffix and text.lstrip()[:1] in "[{"):
         return from_json_data(json.loads(text))
@@ -106,17 +138,31 @@ def from_file(path: str, column: str | None = None) -> list[str]:
     return from_text(text)
 
 
-def from_pretalx_api(base_url: str, event: str, token: str | None, timeout: float = 30) -> list[str]:
+DEFAULT_PRETALX_STATES = ("confirmed", "accepted")
+
+
+def from_pretalx_api(base_url: str, event: str, token: str | None,
+                     states: Iterable[str] = DEFAULT_PRETALX_STATES, timeout: float = 30) -> list[str]:
+    """Speakers of submissions in the given states (default: confirmed + accepted).
+
+    Uses /submissions/ rather than /speakers/: with an organiser token the
+    speakers endpoint also returns people whose talks were rejected or withdrawn.
+    """
     import requests
 
-    url: str | None = f"{base_url.rstrip('/')}/api/events/{event}/speakers/"
+    url: str | None = f"{base_url.rstrip('/')}/api/events/{event}/submissions/"
     headers = {"Accept": "application/json"}
     if token:
         headers["Authorization"] = f"Token {token}"
     names: list[str] = []
-    params: dict[str, Any] | None = {"limit": 100}
+    params: list[tuple[str, str]] | None = [("state", st) for st in states]
+    params += [("expand", "speakers"), ("page_size", "50")]
     while url:
         resp = requests.get(url, headers=headers, params=params, timeout=timeout)
+        if resp.status_code in (401, 403):
+            raise ValueError(f"Pretalx refused access ({resp.status_code}); check PRETALX_TOKEN")
+        if resp.status_code == 404:
+            raise ValueError(f"Pretalx event {event!r} not found at {base_url} (or schedule not public)")
         resp.raise_for_status()
         data = resp.json()
         names.extend(from_json_data(data.get("results", [])))

@@ -1,0 +1,22 @@
+# openalt-name-labels configuration.
+#
+# Copy to openalt-name-labels.toml (git-ignored) and keep it private:
+#   cp openalt-name-labels.example.toml openalt-name-labels.toml
+#   chmod 600 openalt-name-labels.toml
+# ./setup.sh does this for you.
+#
+# NEVER commit the real file: it contains your personal Pretalx API token.
+
+[pretalx]
+# Base URL of the Pretalx instance (no /api suffix).
+url = "https://pretalx.com"
+
+# Event slug, as in https://pretalx.com/<slug>/
+event = "openalt-2026"
+
+# Personal API token: Pretalx -> your user menu -> API -> token.
+# Leave empty to read only public (confirmed, scheduled) data.
+token = ""
+
+# Speakers of submissions in these states get a label.
+states = ["confirmed", "accepted"]

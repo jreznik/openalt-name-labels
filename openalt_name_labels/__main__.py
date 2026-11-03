@@ -7,8 +7,8 @@ import re
 import sys
 from pathlib import Path
 
-from . import printer, sources
-from .render import default_font, mm_to_dots, render_fixed, render_grid, render_label
+from . import config, printer, sources
+from .render import default_font, missing_glyphs, mm_to_dots, render_fixed, render_grid, render_label
 from .zpl import image_to_zpl
 
 HEAD_WIDTH_MM = 104  # XD5-40 print width; label rolls sit centred under the head
@@ -24,11 +24,19 @@ def build_parser() -> argparse.ArgumentParser:
     src.add_argument("-f", "--file", action="append", default=[],
                      help="txt (one per line), csv, Pretalx json, or '-' for stdin; repeatable")
     src.add_argument("--column", help="CSV column holding the name (auto-detected by default)")
-    src.add_argument("--pretalx-event", metavar="SLUG", help="fetch speakers from the Pretalx API")
-    src.add_argument("--pretalx-url", default=os.environ.get("PRETALX_URL", "https://pretalx.com"),
-                     help="Pretalx base URL (default: %(default)s, env PRETALX_URL)")
-    src.add_argument("--pretalx-token", default=os.environ.get("PRETALX_TOKEN"),
-                     help="API token (default: env PRETALX_TOKEN)")
+    src.add_argument("--pretalx", action="store_true",
+                     help="fetch speakers from Pretalx using the config file's url/event/token")
+    src.add_argument("--pretalx-event", metavar="SLUG",
+                     help="fetch speakers of this Pretalx event (overrides the config file)")
+    src.add_argument("--pretalx-url", help="Pretalx base URL (overrides config / env PRETALX_URL)")
+    src.add_argument("--pretalx-state",
+                     help="comma-separated submission states to include (default: config, "
+                          "else confirmed,accepted)")
+    src.add_argument("--config", metavar="FILE",
+                     help=f"config file (default: ./{config.FILENAME}, the repo's "
+                          f"{config.FILENAME}, or ~/.config/openalt-name-labels/config.toml)")
+    src.add_argument("--keep-duplicates", action="store_true",
+                     help="print repeated names every time (default: once, and report the rest)")
 
     lab = p.add_argument_group("label")
     lab.add_argument("--width", type=float, default=float(os.environ.get("BADGE_WIDTH_MM", 70)),
@@ -61,20 +69,42 @@ def build_parser() -> argparse.ArgumentParser:
     out.add_argument("--speed", type=int, help="print speed in ips (^PR)")
     out.add_argument("--preview", metavar="DIR", help="write PNG previews into DIR (no printing)")
     out.add_argument("--output", metavar="FILE", help="write ZPL to FILE instead of printing")
+    out.add_argument("--start", type=int, default=1, metavar="N",
+                     help="start at the N-th name of the list, e.g. to resume after a paper jam")
     out.add_argument("-y", "--yes", action="store_true", help="don't ask for confirmation")
+    out.add_argument("--force", action="store_true",
+                     help="print even names with characters the font cannot draw")
+    out.add_argument("--no-wait", action="store_true",
+                     help="don't wait for CUPS to finish the job")
     out.add_argument("--list-printers", action="store_true", help="list CUPS queues and exit")
     out.add_argument("--grid", action="store_true",
                      help="print one mm ruler grid (full 104 mm head width) to measure the label")
     return p
 
 
-def collect_names(args: argparse.Namespace) -> list[str]:
+def collect_names(args: argparse.Namespace) -> tuple[list[str], list[str]]:
     names: list[str] = list(args.names)
     for f in args.file:
         names += sources.from_file(f, args.column)
-    if args.pretalx_event:
-        names += sources.from_pretalx_api(args.pretalx_url, args.pretalx_event, args.pretalx_token)
-    return sources.clean(names)
+    if args.pretalx or args.pretalx_event:
+        cfg = config.load(args.config).pretalx
+        event = args.pretalx_event or cfg.event
+        if not event:
+            raise ValueError(f"no Pretalx event: set 'event' in {config.FILENAME} or pass --pretalx-event")
+        url = args.pretalx_url or os.environ.get("PRETALX_URL") or cfg.url
+        token = os.environ.get("PRETALX_TOKEN") or cfg.token  # never accepted on the command line
+        states = ([s.strip() for s in args.pretalx_state.split(",") if s.strip()]
+                  if args.pretalx_state else cfg.states)
+        if not token:
+            print("note: no Pretalx token configured, only public data (confirmed, scheduled talks) "
+                  "is available", file=sys.stderr)
+        names += sources.from_pretalx_api(url, event, token, states)
+    return sources.clean(names, args.keep_duplicates)
+
+
+def err(msg: str) -> None:
+    sys.stdout.flush()  # keep errors after the listing they refer to
+    print(f"error: {msg}", file=sys.stderr)
 
 
 def slug(name: str, i: int) -> str:
@@ -91,36 +121,58 @@ def main(argv: list[str] | None = None) -> int:
 
     if args.grid:
         img = render_grid(HEAD_WIDTH_MM, 60, args.dpi, args.font)
-        zpl = image_to_zpl(img, 1, args.darkness, args.speed)
         if args.preview:
             Path(args.preview).mkdir(parents=True, exist_ok=True)
             img.save(Path(args.preview) / "grid.png")
             print(f"Wrote {args.preview}/grid.png")
             return 0
-        print(printer.send_raw(zpl, args.printer, "grid") or "Sent.")
+        try:
+            printer.preflight(args.printer)
+            print(printer.send_raw(image_to_zpl(img, 1, args.darkness, args.speed), args.printer, "grid"))
+        except printer.PrintError as e:
+            err(str(e))
+            return 1
         return 0
 
     try:
-        names = collect_names(args)
+        names, dropped = collect_names(args)
     except Exception as e:  # noqa: BLE001 - report any source error cleanly
-        print(f"error: {e}", file=sys.stderr)
+        err(str(e))
         return 2
+    if dropped:
+        from collections import Counter
+        counts = Counter(dropped)
+        listed = ", ".join(f"{n} (+{c})" if c > 1 else n for n, c in counts.items())
+        why = " - speakers with several talks are listed once per talk" if args.pretalx or args.pretalx_event else ""
+        print(f"note: {len(counts)} name(s) appear more than once and get one label each{why}. "
+              f"Use --keep-duplicates to print every repeat. Repeated: {listed}", file=sys.stderr)
     if not names:
-        print("error: no names given (use arguments, -f FILE or --pretalx-event)", file=sys.stderr)
+        err("no names given (use arguments, -f FILE or --pretalx)")
+        return 2
+    if not 1 <= args.start <= len(names):
+        err(f"--start must be between 1 and {len(names)}")
         return 2
 
     font = args.font or default_font()
+    bad = {n: missing_glyphs(n, font) for n in names}
+    bad = {n: chars for n, chars in bad.items() if chars}
+    for n, chars in bad.items():
+        sys.stdout.flush()
+        print(f"warning: {n!r}: the font has no {' '.join(chars)} - "
+              f"those characters would be missing from the label", file=sys.stderr)
+
+    numbered = list(enumerate(names, 1))[args.start - 1:]
     if args.fit:
         labels = [render_label(n, args.width, args.height, args.dpi, font, args.margin, args.max_font)
-                  for n in names]
+                  for _, n in numbered]
     else:
         labels = [render_fixed(n, args.width, args.height, args.dpi, font, args.margin,
-                               args.font_size, args.line_spacing) for n in names]
+                               args.font_size, args.line_spacing) for _, n in numbered]
 
     if args.preview:
         d = Path(args.preview)
         d.mkdir(parents=True, exist_ok=True)
-        for i, (n, img) in enumerate(zip(names, labels), 1):
+        for (i, n), img in zip(numbered, labels):
             img.save(d / f"{slug(n, i)}.png")
         print(f"Wrote {len(labels)} preview(s) to {d}/")
 
@@ -135,27 +187,52 @@ def main(argv: list[str] | None = None) -> int:
     if args.preview or args.output:
         return 0
 
+    if bad and not args.force:
+        err(f"{len(bad)} name(s) contain characters the font cannot draw (see above). "
+            "Fix the names, use --font with a font that has them, or pass --force.")
+        return 2
+
+    try:
+        printer.preflight(args.printer)
+    except printer.PrintError as e:
+        err(str(e))
+        return 1
+
     total = len(labels) * args.copies
-    print(f"{len(names)} name(s), {total} label(s) -> printer {args.printer!r} "
+    print(f"{total} label(s) -> printer {args.printer!r} "
           f"({args.width:g}x{args.height:g} mm @ {args.dpi} dpi, offset {offset_mm:g} mm)")
-    for n in names[:10]:
-        print(f"  - {n}")
-    if len(names) > 10:
-        print(f"  ... and {len(names) - 10} more")
+    show = numbered if len(numbered) <= 15 else numbered[:10]
+    for i, n in show:
+        print(f"  {i:3d}. {n}")
+    if len(show) < len(numbered):
+        print(f"  ... {len(numbered) - len(show)} more, up to {numbered[-1][0]}. {numbered[-1][1]}")
     if not args.yes:
         if not sys.stdin.isatty():
-            print("error: refusing to print without confirmation; pass --yes", file=sys.stderr)
+            err("refusing to print without confirmation; pass --yes")
             return 2
-        if input("Print? [y/N] ").strip().lower() not in ("y", "yes"):
+        try:
+            answer = input("Print? [y/N] ")
+        except (EOFError, KeyboardInterrupt):
+            answer = ""
+            print()
+        if answer.strip().lower() not in ("y", "yes"):
             print("Aborted.")
             return 1
     try:
         job = printer.send_raw(zpl, args.printer)
     except printer.PrintError as e:
-        print(f"error: {e}", file=sys.stderr)
+        err(str(e))
         return 1
-    print(job or "Sent.")
-    return 0
+    print(f"Sent as CUPS job {job}.")
+    if args.no_wait:
+        return 0
+    if printer.wait_for_job(job, args.printer, timeout=30 + 3 * total):
+        print("Done: CUPS has passed all labels to the printer.")
+        return 0
+    print(f"warning: job {job} is still queued. Check the printer (power, USB, labels); "
+          f"'lpstat -p {args.printer}' shows the state, 'cancel {job}' drops the job. "
+          f"Labels are numbered as above, so you can resume with --start N.", file=sys.stderr)
+    return 1
 
 
 if __name__ == "__main__":

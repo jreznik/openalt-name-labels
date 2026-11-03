@@ -7,3 +7,8 @@ out/
 *_speakers.csv
 .pytest_cache/
 .DS_Store
+
+# Local configuration with the secret Pretalx API token - never commit
+openalt-name-labels.toml
+config.toml
+.env

@@ -1,0 +1,20 @@
+#!/usr/bin/env bash
+# Refuse commits that would publish the Pretalx API token.
+# Enabled by ./setup.sh (git config core.hooksPath .githooks).
+set -euo pipefail
+
+fail=0
+if git diff --cached --name-only --diff-filter=ACMR | grep -qxE '(.*/)?(openalt-name-labels\.toml|config\.toml|\.env)'; then
+  echo "pre-commit: refusing to commit the local config file (it holds your Pretalx token)." >&2
+  fail=1
+fi
+# A non-empty token = "..." / PRETALX_TOKEN=... / "Authorization: Token ..." in any staged change
+if git diff --cached -U0 --no-color | grep -E '^\+' | grep -v '^+++' \
+   | grep -qiE '(^\+\s*token\s*=\s*"[^"]{8,}"|PRETALX_TOKEN\s*=\s*[A-Za-z0-9]{8,}|Token [A-Za-z0-9]{20,})'; then
+  echo "pre-commit: a staged change looks like it contains an API token." >&2
+  fail=1
+fi
+if [ "$fail" = 1 ]; then
+  echo "Remove it (git restore --staged <file>). Bypass only if you're sure: git commit --no-verify" >&2
+  exit 1
+fi

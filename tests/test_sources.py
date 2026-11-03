@@ -4,7 +4,32 @@ from openalt_name_labels import sources
 
 
 def test_clean_dedupes_and_trims():
-    assert sources.clean(["  Ana  Lee ", "ana lee", "", "Bob"]) == ["Ana Lee", "Bob"]
+    assert sources.clean(["  Ana  Lee ", "ana lee", "", "Bob"]) == (["Ana Lee", "Bob"], ["ana lee"])
+
+
+def test_clean_keep_duplicates():
+    names, dropped = sources.clean(["Bezejmenný", "Bezejmenný"], keep_duplicates=True)
+    assert names == ["Bezejmenný", "Bezejmenný"] and dropped == []
+
+
+def test_normalize_nfd_and_invisible_chars():
+    import unicodedata
+    nfd = unicodedata.normalize("NFD", "Jiří Šafařík")
+    assert sources.normalize(nfd) == "Jiří Šafařík"
+    assert sources.normalize("Ana\u200b Lee\ufeff") == "Ana Lee"
+
+
+def test_cp1250_fallback(tmp_path, capsys):
+    p = tmp_path / "n.csv"
+    p.write_bytes("Jméno\nJiří Šafařík\n".encode("cp1250"))
+    assert sources.from_file(str(p)) == ["Jiří Šafařík"]
+    assert "cp1250" in capsys.readouterr().err
+
+
+def test_speaker_codes_are_not_names():
+    import pytest
+    with pytest.raises(ValueError, match="expand"):
+        sources.from_json_data([{"title": "T", "speakers": ["ABC123"]}])
 
 
 def test_text_skips_comments(tmp_path):
@@ -44,23 +69,42 @@ def test_pretalx_schedule_json(tmp_path):
     assert sources.from_file(str(p)) == ["Ana", "Bob"]
 
 
-def test_pretalx_api_pagination(monkeypatch):
+def test_pretalx_api_uses_submissions_with_state_filter(monkeypatch):
+    base = "https://p.example/api/events/ev/submissions/"
     pages = {
-        "https://p.example/api/events/ev/speakers/": {"next": "https://p.example/page2", "results": [{"name": "Ana"}]},
-        "https://p.example/page2": {"next": None, "results": [{"name": "Bob"}]},
+        base: {"next": "https://p.example/page2",
+               "results": [{"state": "confirmed", "speakers": [{"code": "A", "name": "Ana"}]}]},
+        "https://p.example/page2": {"next": None,
+                                    "results": [{"state": "accepted", "speakers": [{"code": "B", "name": "Bob"}]}]},
     }
-    seen_headers = []
+    calls = []
 
     class Resp:
+        status_code = 200
         def __init__(self, d): self.d = d
         def raise_for_status(self): pass
         def json(self): return self.d
 
     def fake_get(url, headers, params, timeout):
-        seen_headers.append(headers)
+        calls.append((url, headers, params))
         return Resp(pages[url])
 
     import requests
     monkeypatch.setattr(requests, "get", fake_get)
     assert sources.from_pretalx_api("https://p.example/", "ev", "tok") == ["Ana", "Bob"]
-    assert seen_headers[0]["Authorization"] == "Token tok"
+    url, headers, params = calls[0]
+    assert headers["Authorization"] == "Token tok"
+    assert ("state", "confirmed") in params and ("state", "accepted") in params
+    assert ("expand", "speakers") in params
+    assert calls[1][2] is None  # next URL already has the query
+
+
+def test_pretalx_api_auth_error(monkeypatch):
+    import pytest, requests
+
+    class Resp:
+        status_code = 401
+
+    monkeypatch.setattr(requests, "get", lambda *a, **k: Resp())
+    with pytest.raises(ValueError, match="PRETALX_TOKEN"):
+        sources.from_pretalx_api("https://p.example", "ev", "bad")
