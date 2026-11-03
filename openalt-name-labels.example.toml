@@ -9,7 +9,7 @@
 
 [pretalx]
 # Base URL of the Pretalx instance (no /api suffix).
-url = "https://pretalx.com"
+url = "https://talks.openalt.cz"
 
 # Event slug, as in https://pretalx.com/<slug>/
 event = "openalt-2026"
@@ -20,3 +20,18 @@ token = ""
 
 # Speakers of submissions in these states get a label.
 states = ["confirmed", "accepted"]
+
+# Submissions on this track are booths (any language of the track name).
+# Their people get booth labels (name + booth title), printed with --category booth.
+booth_track = "Stánek"
+
+# Pretalx placeholder accounts that are not real people.
+placeholder_names = ["Bezejmenný přednášející"]
+
+# Booths listing only placeholders or nobody get this many labels with just the booth title.
+unnamed_booth_copies = 2
+
+[print]
+# Show the full numbered list of labels and ask before printing.
+# Set to false only for unattended automation (same as passing --yes).
+confirm = true

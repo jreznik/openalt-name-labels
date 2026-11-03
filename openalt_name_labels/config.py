@@ -28,16 +28,20 @@ REPO_ROOT = Path(__file__).resolve().parent.parent
 
 @dataclass
 class PretalxConfig:
-    url: str = "https://pretalx.com"
+    url: str = "https://talks.openalt.cz"
     event: str | None = None
     token: str | None = field(default=None, repr=False)  # never shown in repr/logs
     states: list[str] = field(default_factory=lambda: ["confirmed", "accepted"])
+    booth_track: str = "Stánek"
+    placeholder_names: list[str] = field(default_factory=lambda: ["Bezejmenný přednášející"])
+    unnamed_booth_copies: int = 2
 
 
 @dataclass
 class Config:
     path: Path | None = None
     pretalx: PretalxConfig = field(default_factory=PretalxConfig)
+    confirm: bool = True  # [print] confirm: show the list and ask before printing
 
 
 def candidates(explicit: str | None = None) -> list[Path]:
@@ -76,7 +80,8 @@ def load(explicit: str | None = None) -> Config:
             raise ValueError(f"{path}: invalid TOML: {e}") from None
 
     p = data.get("pretalx", {})
-    unknown = set(p) - {"url", "event", "token", "states"}
+    unknown = set(p) - {"url", "event", "token", "states", "booth_track", "placeholder_names",
+                        "unnamed_booth_copies"}
     if unknown:
         raise ValueError(f"{path}: unknown [pretalx] keys: {', '.join(sorted(unknown))}")
     cfg = PretalxConfig()
@@ -87,6 +92,20 @@ def load(explicit: str | None = None) -> Config:
     if isinstance(states, str):
         states = [s.strip() for s in states.split(",")]
     cfg.states = [str(s) for s in states if str(s).strip()]
+    cfg.booth_track = str(p.get("booth_track") or cfg.booth_track)
+    names = p.get("placeholder_names", cfg.placeholder_names)
+    cfg.placeholder_names = [names] if isinstance(names, str) else [str(n) for n in names]
+    copies = p.get("unnamed_booth_copies", cfg.unnamed_booth_copies)
+    if not isinstance(copies, int) or copies < 0:
+        raise ValueError(f"{path}: unnamed_booth_copies must be a whole number >= 0")
+    cfg.unnamed_booth_copies = copies
     if cfg.token:
         _check_permissions(path)
-    return Config(path=path, pretalx=cfg)
+    pr = data.get("print", {})
+    unknown = set(pr) - {"confirm"}
+    if unknown:
+        raise ValueError(f"{path}: unknown [print] keys: {', '.join(sorted(unknown))}")
+    confirm = pr.get("confirm", True)
+    if not isinstance(confirm, bool):
+        raise ValueError(f"{path}: [print] confirm must be true or false")
+    return Config(path=path, pretalx=cfg, confirm=confirm)

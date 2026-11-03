@@ -95,3 +95,13 @@ def test_regular_names_keep_original_size():
     l, t, r, b = ImageOps.invert(img.convert("L")).getbbox()
     # 'R' cap height + one 36.851 pt line pitch, at full 29.89 pt (no shrinking)
     assert abs((b - t) - (36.851 / 72 * 203 + 0.714 * 29.8879 / 72 * 203)) < 25
+
+
+def test_booth_label_has_subtitle_inside_label():
+    from openalt_name_labels.render import render_fixed
+    img = render_fixed("Martin Kolman", 70, 30, 203, default_font(), 3, 29.8879, 36.851,
+                       subtitle="OpenHardware & 3D printing")
+    l, t, r, b = Image.eval(img.convert("L"), lambda v: 255 - v).getbbox()
+    m = mm_to_dots(3, 203)
+    assert l >= m - 2 and r <= img.width - m + 2
+    assert t >= mm_to_dots(0.75, 203) and b <= img.height - mm_to_dots(0.75, 203)

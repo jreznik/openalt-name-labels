@@ -132,48 +132,83 @@ def split_name(name: str, font: ImageFont.FreeTypeFont) -> list[str]:
 
 
 def render_fixed(name: str, width_mm: float, height_mm: float, dpi: int, font_path: str,
-                 margin_mm: float, font_pt: float, line_pt: float) -> Image.Image:
-    """Fixed type size, shrunk only when a line is wider than the label allows.
+                 margin_mm: float, font_pt: float, line_pt: float,
+                 subtitle: str | None = None, subtitle_pt: float = 11.0) -> Image.Image:
+    """Fixed type size, shrunk only when the name doesn't fit the label.
 
     Vertical centring uses cap height to last baseline (not the ink), so every
     badge has its baselines in the same place regardless of descenders/accents.
+    An optional subtitle (booth name) goes in a smaller line below the name;
+    then the name may also stay on one line if that keeps it larger.
     """
     w, h = mm_to_dots(width_mm, dpi), mm_to_dots(height_mm, dpi)
     box_w = w - 2 * mm_to_dots(margin_mm, dpi)
-    size = pt_to_dots(font_pt, dpi)
-    lines = split_name(name, _font(font_path, round(size)))
-
-    def ink_w(px: int) -> int:
-        f = _font(font_path, px)
-        return max(f.getbbox(x, anchor="ms")[2] - f.getbbox(x, anchor="ms")[0] for x in lines)
-
     v_safe = mm_to_dots(0.75, dpi)  # never let accents/descenders reach the label edge
+    size = pt_to_dots(font_pt, dpi)
 
-    def layout(px: int) -> tuple[ImageFont.FreeTypeFont, float, float]:
+    sub_font = None
+    if subtitle:
+        sub_px = round(pt_to_dots(subtitle_pt, dpi))
+        while sub_px > 1 and _ink_width([subtitle], _font(font_path, sub_px)) > box_w:
+            sub_px -= 1
+        sub_font = _font(font_path, sub_px)
+        sub_cap = -sub_font.getbbox("H", anchor="ls")[1]
+        gap = mm_to_dots(1.2, dpi)
+
+    def layout(lines: list[str], px: int):
         f = _font(font_path, px)
         pitch = pt_to_dots(line_pt, dpi) * px / size
         cap = -f.getbbox("H", anchor="ls")[1]
-        baseline = (h - (cap + pitch * (len(lines) - 1))) / 2 + cap
-        return f, pitch, baseline
+        block = cap + pitch * (len(lines) - 1)
+        if sub_font:
+            descent = f.getbbox("gjpy", anchor="ls")[3]
+            block += descent + gap + sub_cap
+        top = (h - block) / 2
+        baseline = top + cap
+        sub_base = top + block if sub_font else None
+        return f, pitch, baseline, sub_base
 
-    def fits(px: int) -> bool:
-        if ink_w(px) > box_w:
+    def fits(lines: list[str], px: int) -> bool:
+        f = _font(font_path, px)
+        if _ink_width(lines, f) > box_w:
             return False
-        f, pitch, baseline = layout(px)
+        f, pitch, baseline, sub_base = layout(lines, px)
         top = min(f.getbbox(x, anchor="ls")[1] + baseline + i * pitch for i, x in enumerate(lines))
         bottom = max(f.getbbox(x, anchor="ls")[3] + baseline + i * pitch for i, x in enumerate(lines))
+        if sub_font:
+            bottom = max(bottom, sub_font.getbbox(subtitle, anchor="ls")[3] + sub_base)
         return top >= v_safe and bottom <= h - v_safe
 
-    px = round(size)
-    while px > 1 and not fits(px):  # shrink only when the name doesn't fit
-        px -= 1
-    font, pitch, baseline = layout(px)
+    def best_px(lines: list[str]) -> int:
+        px = round(size)
+        while px > 1 and not fits(lines, px):
+            px -= 1
+        return px
+
+    lines = split_name(name, _font(font_path, round(size)))
+    px = best_px(lines)
+    if sub_font and len(lines) > 1:
+        one = [name]
+        px_one = best_px(one)
+        # With a booth line below, one name line reads better and leaves room;
+        # use two lines only if one line would have to shrink a lot.
+        if px_one >= 0.75 * round(size) or px_one >= px:
+            lines, px = one, px_one
+
+    font, pitch, baseline, sub_base = layout(lines, px)
     img = Image.new("1", (w, h), 1)
     draw = ImageDraw.Draw(img)
     for i, line in enumerate(lines):
         l, _, r, _ = font.getbbox(line, anchor="ms")
         draw.text((w / 2 - (l + r) / 2, round(baseline + i * pitch)), line, font=font, fill=0, anchor="ms")
+    if sub_font:
+        l, _, r, _ = sub_font.getbbox(subtitle, anchor="ms")
+        draw.text((w / 2 - (l + r) / 2, round(sub_base)), subtitle, font=sub_font, fill=0, anchor="ms")
     return img
+
+
+def _ink_width(lines: list[str], font: ImageFont.FreeTypeFont) -> int:
+    return max(font.getbbox(x, anchor="ms")[2] - font.getbbox(x, anchor="ms")[0] for x in lines)
 
 
 def render_label(name: str, width_mm: float, height_mm: float, dpi: int = 203,

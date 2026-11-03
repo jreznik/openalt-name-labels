@@ -6,8 +6,13 @@ import io
 import json
 import sys
 import unicodedata
+from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Iterable
+
+SPEAKER = "speaker"
+BOOTH = "booth"
+CATEGORIES = (SPEAKER, BOOTH)
 
 NAME_COLUMNS = ("name", "jméno", "jmeno", "public_name", "full name", "fullname", "speaker", "speaker name", "attendee name")
 
@@ -38,6 +43,43 @@ def clean(names: Iterable[str], keep_duplicates: bool = False) -> tuple[list[str
             continue
         seen.add(n.casefold())
         out.append(n)
+    return out, dropped
+
+
+@dataclass(frozen=True)
+class Label:
+    """One label to print.
+
+    category: SPEAKER / BOOTH for Pretalx data, None for names from files or
+    the command line. key identifies the person (Pretalx speaker code) so two
+    different people with the same name are not merged.
+    """
+    name: str
+    subtitle: str | None = None
+    category: str | None = None
+    key: str | None = None
+
+    def dedupe_key(self) -> tuple:
+        return (self.category, self.key or self.name.casefold(), (self.subtitle or "").casefold())
+
+
+def clean_labels(labels: Iterable[Label], keep_duplicates: bool = False) -> tuple[list[Label], list[Label]]:
+    """Normalise texts, drop empties, and drop repeats of the same person in the
+    same category (and booth). Returns (labels, dropped_duplicates)."""
+    seen: set[tuple] = set()
+    out: list[Label] = []
+    dropped: list[Label] = []
+    for lab in labels:
+        lab = Label(normalize(lab.name), normalize(lab.subtitle) if lab.subtitle else None,
+                    lab.category, lab.key)
+        if not lab.name:
+            continue
+        k = lab.dedupe_key()
+        if k in seen and not keep_duplicates:
+            dropped.append(lab)
+            continue
+        seen.add(k)
+        out.append(lab)
     return out, dropped
 
 
@@ -139,33 +181,92 @@ def from_file(path: str, column: str | None = None) -> list[str]:
 
 
 DEFAULT_PRETALX_STATES = ("confirmed", "accepted")
+DEFAULT_BOOTH_TRACK = "Stánek"
+DEFAULT_PLACEHOLDERS = ("Bezejmenný přednášející",)
 
 
-def from_pretalx_api(base_url: str, event: str, token: str | None,
-                     states: Iterable[str] = DEFAULT_PRETALX_STATES, timeout: float = 30) -> list[str]:
-    """Speakers of submissions in the given states (default: confirmed + accepted).
+def _i18n(value: Any) -> list[str]:
+    """Pretalx names are either strings or {"cs": ..., "en": ...} dicts."""
+    if isinstance(value, dict):
+        return [v for v in value.values() if isinstance(v, str)]
+    return [value] if isinstance(value, str) else []
 
-    Uses /submissions/ rather than /speakers/: with an organiser token the
-    speakers endpoint also returns people whose talks were rejected or withdrawn.
+
+def _pick(value: Any, locales: tuple[str, ...] = ("cs", "en")) -> str:
+    if isinstance(value, dict):
+        for loc in locales:
+            if value.get(loc):
+                return value[loc]
+        return next((v for v in value.values() if v), "")
+    return value or ""
+
+
+def labels_from_submissions(submissions: Iterable[dict], booth_track: str = DEFAULT_BOOTH_TRACK,
+                            placeholders: Iterable[str] = DEFAULT_PLACEHOLDERS,
+                            unnamed_booth_copies: int = 2) -> list[Label]:
+    """Turn Pretalx submissions (with expanded speakers and track) into labels.
+
+    - Talks -> one SPEAKER label per speaker.
+    - Booths (track named booth_track, in any language) -> one BOOTH label per
+      person, with the booth title as subtitle.
+    - Booths whose people are all placeholders ("Bezejmenný přednášející") or
+      that list nobody -> unnamed_booth_copies labels with just the booth title.
     """
+    booth_track_cf = booth_track.casefold()
+    placeholder_cf = {normalize(p).casefold() for p in placeholders}
+    labels: list[Label] = []
+    for sub in submissions:
+        track = sub.get("track")
+        track_names = _i18n(track.get("name")) if isinstance(track, dict) else []
+        is_booth = any(t.strip().casefold() == booth_track_cf for t in track_names)
+        speakers = sub.get("speakers") or []
+        if speakers and not any(isinstance(sp, dict) for sp in speakers):
+            raise ValueError("Submissions list speakers only as codes; fetch them with ?expand=speakers")
+        people = [sp for sp in speakers if isinstance(sp, dict) and _speaker_name(sp)
+                  and normalize(_speaker_name(sp)).casefold() not in placeholder_cf]
+        title = normalize(_pick(sub.get("title")))
+        if is_booth:
+            for sp in people:
+                labels.append(Label(_speaker_name(sp), title, BOOTH, sp.get("code")))
+            if not people:
+                labels += [Label(title, None, BOOTH, f"{sub.get('code')}#{i}")
+                           for i in range(unnamed_booth_copies)]
+        else:
+            for sp in people:
+                labels.append(Label(_speaker_name(sp), None, SPEAKER, sp.get("code")))
+            # placeholder speakers on a talk are skipped: nothing sensible to print
+    return labels
+
+
+def fetch_pretalx_submissions(base_url: str, event: str, token: str | None,
+                              states: Iterable[str] = DEFAULT_PRETALX_STATES,
+                              timeout: float = 30) -> list[dict]:
+    """Submissions in the given states, with speakers and track expanded."""
     import requests
 
     url: str | None = f"{base_url.rstrip('/')}/api/events/{event}/submissions/"
     headers = {"Accept": "application/json"}
     if token:
         headers["Authorization"] = f"Token {token}"
-    names: list[str] = []
+    out: list[dict] = []
     params: list[tuple[str, str]] | None = [("state", st) for st in states]
-    params += [("expand", "speakers"), ("page_size", "50")]
+    params += [("expand", "speakers,track"), ("page_size", "50")]
     while url:
         resp = requests.get(url, headers=headers, params=params, timeout=timeout)
         if resp.status_code in (401, 403):
-            raise ValueError(f"Pretalx refused access ({resp.status_code}); check PRETALX_TOKEN")
+            raise ValueError(f"Pretalx refused access ({resp.status_code}); check the token in the config file")
         if resp.status_code == 404:
             raise ValueError(f"Pretalx event {event!r} not found at {base_url} (or schedule not public)")
         resp.raise_for_status()
         data = resp.json()
-        names.extend(from_json_data(data.get("results", [])))
+        out.extend(data.get("results", []))
         url = data.get("next")
         params = None  # "next" already carries the query string
-    return names
+    return out
+
+
+def from_pretalx_api(base_url: str, event: str, token: str | None,
+                     states: Iterable[str] = DEFAULT_PRETALX_STATES, timeout: float = 30) -> list[str]:
+    """Plain list of names (speakers and booth people) - kept for simple uses."""
+    subs = fetch_pretalx_submissions(base_url, event, token, states, timeout)
+    return [lab.name for lab in labels_from_submissions(subs, unnamed_booth_copies=0)]

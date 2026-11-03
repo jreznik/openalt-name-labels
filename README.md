@@ -81,7 +81,10 @@ Each grid cell is labelled with its position in mm as `x,y`. The values at the l
 
 ## Usage
 
-Before printing, the tool lists the names and asks for confirmation. Add `-y` to skip the question.
+**Before anything prints**, the tool shows the full numbered list of labels and asks `Print these N label(s)? [y/N]`. Only `y` (or `ano`) prints.
+- `--list` only shows the list.
+- `--preview out/` saves a PNG of each label.
+- For unattended automation, pass `--yes`, or set `confirm = false` under `[print]` in the config.
 
 ```sh
 L=.venv/bin/openalt-name-labels
@@ -98,12 +101,13 @@ some-command | $L -f -                   # read names from stdin
 # Pretalx exports: speakers CSV/JSON, or the public schedule.json
 $L -f schedule.json
 
-# Pretalx API: speakers of confirmed and accepted talks (not rejected or withdrawn ones),
-# using the URL, event and token from openalt-name-labels.toml (see "Pretalx configuration")
-$L --pretalx --preview out/
-$L --pretalx
-$L --pretalx --pretalx-state confirmed     # confirmed talks only
-$L --pretalx-event other-event             # a different event than the config's
+# Pretalx API: confirmed and accepted submissions (not rejected or withdrawn ones),
+# using the URL, event and token from openalt-name-labels.toml (see "Pretalx configuration").
+$L --pretalx --list                        # everything, grouped by category; prints nothing
+$L --pretalx --category speaker            # run 1: speaker badges
+$L --pretalx --category booth              # run 2: booth badges
+$L --pretalx --category booth --preview out/
+$L --pretalx --pretalx-state confirmed --category speaker   # confirmed talks only
 ```
 
 You can combine sources: `$L -f speakers.csv "Extra Guest"`.
@@ -120,9 +124,26 @@ You can combine sources: `$L -f speakers.csv "Extra Guest"`.
 ### On the conference day
 
 - **Install beforehand:** run `./setup.sh` before the event, because it needs internet access to install the dependencies. Printing itself works offline, except `--pretalx-event`.
-- **Preview first:** run once with `--preview out/` and look through the PNGs.
+- **Preview first:** run `--pretalx --list`, then `--category speaker --preview out/` and `--category booth --preview out/`, and look through the PNGs.
+- **Print in two runs:** `--category speaker` on the speaker badges, then `--category booth` on the booth badges.
 - **Printed labels are numbered** in the listing. If the printer jams or runs out of labels partway through, fix it, then resume with `--start N`, where N is the first label that didn't print. To reprint single badges, just give the names: `$L "Jiří Rak"`.
 - **Extra copies:** use `--copies N`.
+
+### Speakers and booths (Pretalx)
+
+Pretalx data is split into two categories. They go on different badges, so they are **printed in separate runs**: the tool refuses to mix them and asks for `--category`.
+
+| category | who | label |
+|---|---|---|
+| `speaker` (přednášející) | speakers of every confirmed or accepted talk/workshop | the name |
+| `booth` (stánek) | people on submissions in track **Stánek** (`booth_track` in the config) | the name, with the booth name in a smaller line below |
+
+- **Speaker and booth staff:** a person who does both gets **both** badges.
+- **Several talks:** a speaker with several talks gets one speaker badge. Two different people with the same name both get one, because the tool tells them apart by their Pretalx speaker ID.
+- **Booths without real people:** a booth that lists only the placeholder "Bezejmenný přednášející", or nobody, gets labels with just the booth name. There are 2 per booth by default (`unnamed_booth_copies` in the config, or `--booth-copies N`).
+- **Sorting:** labels are sorted alphabetically, so badges are easy to find at registration.
+
+Names from files or the command line have no category. They print in the order given, in any run.
 
 ### Pretalx configuration
 
@@ -130,10 +151,16 @@ The Pretalx URL, event and **API token** live in **`openalt-name-labels.toml`** 
 
 ```toml
 [pretalx]
-url = "https://pretalx.com"      # your Pretalx instance
+url = "https://talks.openalt.cz" # your Pretalx instance
 event = "openalt-2026"           # event slug from the URL
 token = "…"                      # Pretalx → your user menu → API → token
 states = ["confirmed", "accepted"]
+booth_track = "Stánek"           # track whose submissions are booths
+placeholder_names = ["Bezejmenný přednášející"]
+unnamed_booth_copies = 2
+
+[print]
+confirm = true                   # show the list and ask before printing
 ```
 
 **Keeping the token private:**
@@ -178,7 +205,10 @@ $L -f speakers.csv --output out/all.zpl  # save the printer data to a file inste
 | `--speed` | printer setting | inches per second |
 | `--list-printers` | | show the printers set up in CUPS |
 | `--grid` | | print the mm ruler grid |
-| `--start N` | 1 | start at the N-th name, e.g. to resume after a jam |
+| `--category` | | `speaker` or `booth`; required when Pretalx data contains both |
+| `--booth-copies N` | config, else 2 | labels per booth that lists no real people |
+| `--list` | | show the numbered list of labels, print nothing |
+| `--start N` | 1 | start at the N-th label, e.g. to resume after a jam |
 | `--keep-duplicates` | off | print repeated names every time |
 | `--pretalx` | | fetch speakers from Pretalx using the config file |
 | `--pretalx-event`, `--pretalx-url` | config file | override the config's event or URL |
@@ -186,7 +216,7 @@ $L -f speakers.csv --output out/all.zpl  # save the printer data to a file inste
 | `--config FILE` | see above | use this config file |
 | `--force` | off | print names even if the font lacks some of their characters |
 | `--no-wait` | off | don't wait for CUPS to finish the job |
-| `-y`, `--yes` | | print without asking |
+| `-y`, `--yes` | | print without showing the list and asking (automation) |
 
 ---
 

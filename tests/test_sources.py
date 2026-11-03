@@ -95,7 +95,7 @@ def test_pretalx_api_uses_submissions_with_state_filter(monkeypatch):
     url, headers, params = calls[0]
     assert headers["Authorization"] == "Token tok"
     assert ("state", "confirmed") in params and ("state", "accepted") in params
-    assert ("expand", "speakers") in params
+    assert ("expand", "speakers,track") in params
     assert calls[1][2] is None  # next URL already has the query
 
 
@@ -106,5 +106,46 @@ def test_pretalx_api_auth_error(monkeypatch):
         status_code = 401
 
     monkeypatch.setattr(requests, "get", lambda *a, **k: Resp())
-    with pytest.raises(ValueError, match="PRETALX_TOKEN"):
+    with pytest.raises(ValueError, match="token"):
         sources.from_pretalx_api("https://p.example", "ev", "bad")
+
+
+BOOTH_TRACK = {"id": 40, "name": {"cs": "Stánek", "en": "Booth"}}
+TALK_TRACK = {"id": 34, "name": {"cs": "Otevřený a svobodný software", "en": "FOSS"}}
+
+
+def sp(code, name):
+    return {"code": code, "name": name}
+
+
+def test_labels_speakers_and_booths():
+    from openalt_name_labels.sources import BOOTH, SPEAKER, Label
+    subs = [
+        {"code": "T1", "title": "Talk", "track": TALK_TRACK, "speakers": [sp("A", "Ana"), sp("P", "Petr Hodina")]},
+        {"code": "T2", "title": "Talk 2", "track": TALK_TRACK, "speakers": [sp("P", "Petr Hodina")]},
+        {"code": "B1", "title": "Mobilní Linux", "track": BOOTH_TRACK, "speakers": [sp("P", "Petr Hodina")]},
+        {"code": "B2", "title": "OpenSSL", "track": BOOTH_TRACK, "speakers": [sp("X", "Bezejmenný přednášející")]},
+        {"code": "B3", "title": "Red Hat", "track": BOOTH_TRACK, "speakers": []},
+    ]
+    labels, dropped = sources.clean_labels(sources.labels_from_submissions(subs, unnamed_booth_copies=2))
+    assert labels == [
+        Label("Ana", None, SPEAKER, "A"),
+        Label("Petr Hodina", None, SPEAKER, "P"),
+        Label("Petr Hodina", "Mobilní Linux", BOOTH, "P"),   # speaker AND booth: both badges
+        Label("OpenSSL", None, BOOTH, "B2#0"), Label("OpenSSL", None, BOOTH, "B2#1"),
+        Label("Red Hat", None, BOOTH, "B3#0"), Label("Red Hat", None, BOOTH, "B3#1"),
+    ]
+    assert [d.name for d in dropped] == ["Petr Hodina"]  # second talk, same speaker code
+
+
+def test_same_name_different_people_kept():
+    subs = [{"code": "T1", "title": "a", "track": TALK_TRACK, "speakers": [sp("A", "Jan Novák")]},
+            {"code": "T2", "title": "b", "track": TALK_TRACK, "speakers": [sp("B", "Jan Novák")]}]
+    labels, dropped = sources.clean_labels(sources.labels_from_submissions(subs))
+    assert len(labels) == 2 and not dropped
+
+
+def test_booth_track_matched_in_english_too():
+    subs = [{"code": "B", "title": "Vim", "track": {"name": {"en": "Booth"}}, "speakers": [sp("V", "Ana")]}]
+    labels = sources.labels_from_submissions(subs, booth_track="booth")
+    assert labels[0].category == "booth" and labels[0].subtitle == "Vim"
