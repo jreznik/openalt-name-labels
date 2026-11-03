@@ -55,3 +55,28 @@ def test_list_prints_nothing(monkeypatch, tmp_path, capsys):
     assert cli.main(["--pretalx", "--list"]) == 0
     out = capsys.readouterr().out
     assert "Ana" in out and "Bob  —  Vim" in out and not sent
+
+
+def test_parse_selection():
+    import pytest
+    assert cli.parse_selection("3", 10) == [3]
+    assert cli.parse_selection("3, 9,12-14", 20) == [3, 9, 12, 13, 14]
+    assert cli.parse_selection("5,5,4-6", 10) == [5, 4, 6]
+    with pytest.raises(ValueError, match="doesn't exist"):
+        cli.parse_selection("11", 10)
+    with pytest.raises(ValueError, match="not a number"):
+        cli.parse_selection("x", 10)
+
+
+def test_only_prints_selected_labels(monkeypatch, tmp_path, capsys):
+    labels = [Label(f"Person {i}", "Booth", BOOTH, str(i)) for i in range(1, 6)]
+    sent = setup(monkeypatch, tmp_path, labels)
+    assert cli.main(["--pretalx", "--category", "booth", "--only", "2,4", "-y"]) == 0
+    assert sent[0].count(b"^XA") == 2
+
+
+def test_only_and_start_are_exclusive(monkeypatch, tmp_path, capsys):
+    import pytest
+    setup(monkeypatch, tmp_path)
+    with pytest.raises(SystemExit):
+        cli.main(["--pretalx", "--only", "1", "--start", "2"])

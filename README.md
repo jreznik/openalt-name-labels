@@ -20,7 +20,8 @@ $L --pretalx --list                        # 1. check who gets a label; prints n
 $L --pretalx --category speaker            # 2. speaker badges: shows the list, asks, prints
 $L --pretalx --category booth              # 3. booth badges (load the booth badge stock first)
 
-$L "Jana Nováková"                         # a single late registration or reprint
+$L "Jana Nováková"                         # a late registration (name only)
+$L --pretalx --category booth --only 9     # reprint label 9 from the list, with its booth name
 $L --pretalx --category speaker --start 37 # resume after a paper jam at label 37
 ```
 
@@ -182,7 +183,7 @@ Names from files and the command line have no category. They print in the order 
 - **Preview first:** run `$L --pretalx --list`, then `--preview out/` for each category, and look through the PNGs.
 - **Two runs:** print `--category speaker` on the speaker badges, then `--category booth` on the booth badges.
 - **Resuming:** labels are numbered in the list. If the printer jams or runs out of labels partway through, fix it, then resume with `--start N`, where N is the first label that didn't print.
-- **Reprinting a single badge:** give the name: `$L "Jiří Rak"`.
+- **Reprinting a badge:** find its number with `--list`, then use `--only N`. Several work too, e.g. `--only 3,9,12-14`. This keeps the booth name on booth labels. A plain name also works for speaker badges: `$L "Jiří Rak"`.
 
 ---
 
@@ -248,6 +249,7 @@ The environment variables `PRETALX_URL` and `PRETALX_TOKEN`, and the options `--
 | `--output FILE` | | save the printer data (ZPL) to a file, print nothing |
 | `-y`, `--yes` | | print without showing the list and asking |
 | `--start N` | 1 | start at the N-th label, e.g. to resume after a jam |
+| `--only LIST` | | print only these label numbers from the list, e.g. `9`, `3,9` or `12-14` |
 | `--copies N` | 1 | copies of each label |
 | `--force` | off | print even if the font lacks some characters |
 | `--no-wait` | off | don't wait for CUPS to finish the job |

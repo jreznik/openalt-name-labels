@@ -77,8 +77,11 @@ def build_parser() -> argparse.ArgumentParser:
     out.add_argument("--speed", type=int, help="print speed in ips (^PR)")
     out.add_argument("--preview", metavar="DIR", help="write PNG previews into DIR (no printing)")
     out.add_argument("--output", metavar="FILE", help="write ZPL to FILE instead of printing")
-    out.add_argument("--start", type=int, default=1, metavar="N",
-                     help="start at the N-th name of the list, e.g. to resume after a paper jam")
+    sel = out.add_mutually_exclusive_group()
+    sel.add_argument("--start", type=int, default=1, metavar="N",
+                     help="start at the N-th label of the list, e.g. to resume after a paper jam")
+    sel.add_argument("--only", metavar="LIST",
+                     help="print only these label numbers from the list, e.g. 3 or 3,9 or 12-14")
     out.add_argument("-y", "--yes", action="store_true",
                      help="print without showing the list and asking (for automation)")
     out.add_argument("--list", action="store_true",
@@ -114,6 +117,30 @@ def collect_labels(args: argparse.Namespace, cfg: config.Config) -> tuple[list[L
         copies = args.booth_copies if args.booth_copies is not None else pc.unnamed_booth_copies
         labels += sources.labels_from_submissions(subs, pc.booth_track, pc.placeholder_names, copies)
     return sources.clean_labels(labels, args.keep_duplicates)
+
+
+def parse_selection(spec: str, count: int) -> list[int]:
+    """'3,9,12-14' -> [3, 9, 12, 13, 14] (1-based, in the given order, no repeats)."""
+    picked: list[int] = []
+    for part in spec.replace(" ", "").split(","):
+        if not part:
+            continue
+        try:
+            if "-" in part:
+                a, b = (int(x) for x in part.split("-", 1))
+                nums = range(a, b + 1) if a <= b else range(a, b - 1, -1)
+            else:
+                nums = [int(part)]
+        except ValueError:
+            raise ValueError(f"--only: {part!r} is not a number or range like 12-14") from None
+        for n in nums:
+            if not 1 <= n <= count:
+                raise ValueError(f"--only: label {n} doesn't exist (the list has 1-{count}; see --list)")
+            if n not in picked:
+                picked.append(n)
+    if not picked:
+        raise ValueError("--only: no label numbers given")
+    return picked
 
 
 def sort_key(text: str) -> tuple[str, str]:
@@ -204,7 +231,16 @@ def main(argv: list[str] | None = None) -> int:
         print(f"warning: {text!r}: the font has no {' '.join(chars)} - "
               f"those characters would be missing from the label", file=sys.stderr)
 
-    numbered = list(enumerate(labels, 1))[args.start - 1:]
+    numbered = list(enumerate(labels, 1))
+    if args.only:
+        try:
+            picked = parse_selection(args.only, len(labels))
+        except ValueError as e:
+            err(str(e))
+            return 2
+        numbered = [numbered[n - 1] for n in picked]
+    else:
+        numbered = numbered[args.start - 1:]
 
     def show_list() -> None:
         current = object()
