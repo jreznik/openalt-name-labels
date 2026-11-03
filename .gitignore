@@ -1,0 +1,9 @@
+.venv/
+__pycache__/
+*.egg-info/
+out/
+
+# Real attendee/speaker data - keep out of the repo
+*_speakers.csv
+.pytest_cache/
+.DS_Store

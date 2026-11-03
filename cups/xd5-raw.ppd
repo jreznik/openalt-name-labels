@@ -1,0 +1,36 @@
+*PPD-Adobe: "4.3"
+*FormatVersion: "4.3"
+*FileVersion: "1.0"
+*LanguageVersion: English
+*LanguageEncoding: ISOLatin1
+*PCFileName: "XD5RAW.PPD"
+*Manufacturer: "BIXOLON"
+*Product: "(XD5-40d)"
+*ModelName: "Bixolon XD5 raw ZPL passthrough"
+*ShortNickName: "Bixolon XD5 raw ZPL"
+*NickName: "Bixolon XD5 raw ZPL passthrough"
+*PSVersion: "(3010.000) 0"
+*LanguageLevel: "3"
+*ColorDevice: False
+*DefaultColorSpace: Gray
+*FileSystem: False
+*Throughput: "1"
+*LandscapeOrientation: Plus90
+*TTRasterizer: Type42
+*% Everything sent to this queue goes to the printer unmodified.
+*cupsFilter: "application/vnd.cups-raw 0 -"
+*cupsFilter2: "application/octet-stream application/vnd.cups-raw 0 -"
+*OpenUI *PageSize/Media Size: PickOne
+*OrderDependency: 10 AnySetup *PageSize
+*DefaultPageSize: w288h144
+*PageSize w288h144/100x50mm: ""
+*CloseUI: *PageSize
+*OpenUI *PageRegion: PickOne
+*OrderDependency: 10 AnySetup *PageRegion
+*DefaultPageRegion: w288h144
+*PageRegion w288h144/100x50mm: ""
+*CloseUI: *PageRegion
+*DefaultImageableArea: w288h144
+*ImageableArea w288h144/100x50mm: "0 0 288 144"
+*DefaultPaperDimension: w288h144
+*PaperDimension w288h144/100x50mm: "288 144"
