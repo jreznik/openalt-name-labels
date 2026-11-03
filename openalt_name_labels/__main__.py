@@ -57,7 +57,7 @@ def build_parser() -> argparse.ArgumentParser:
                           f"(default: centred on the {HEAD_WIDTH_MM:g} mm head, env BADGE_OFFSET_X_MM)")
     lab.add_argument("--dpi", type=int, default=203, help="printer resolution (default: %(default)s)")
     lab.add_argument("--margin", type=float, default=3.0, help="margin in mm (default: %(default)s)")
-    lab.add_argument("--font", help="TTF/OTF font path (default: system bold sans)")
+    lab.add_argument("--font", help="TTF/OTF font path (default: bundled Open Sans Bold)")
     lab.add_argument("--font-size", type=float, default=29.8879, metavar="PT",
                      help="type size in pt, as on the original badges (default: %(default)s); "
                           "shrinks only if a line doesn't fit the label width")
