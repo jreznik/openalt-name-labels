@@ -55,6 +55,14 @@ def test_zpl_full_head_page_width():
     assert "^PW832" in z and "^FO136,0" in z
 
 
+def test_zpl_print_mode():
+    img = Image.new("1", (16, 1), 1)
+    default = image_to_zpl(img).decode()
+    assert "^MMT" in default and "^MMC" not in default
+    cut = image_to_zpl(img, cut=True).decode()
+    assert "^MMC" in cut and "^MMT" not in cut
+
+
 def test_fixed_size_split_and_cap_height():
     from openalt_name_labels.render import render_fixed, split_name, _font
     f = _font(default_font(), 84)

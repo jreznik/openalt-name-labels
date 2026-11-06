@@ -17,14 +17,18 @@ def image_to_gfa(img: Image.Image) -> tuple[str, int, int]:
 
 def image_to_zpl(img: Image.Image, copies: int = 1, darkness: int | None = None,
                  speed: int | None = None, x_offset: int = 0,
-                 page_width: int | None = None) -> bytes:
+                 page_width: int | None = None, cut: bool = False) -> bytes:
     """x_offset: dots from the left edge of the print head to the label's left edge.
 
     page_width: ^PW in dots. Pass the full head width: the XD5 centres a narrower
     ^PW print area on the head, which would shift the image on top of x_offset.
+
+    cut: use the optional cutter (^MMC). Otherwise tear-off mode (^MMT) is set
+    explicitly, because the print mode stays active for later jobs.
     """
     data, total, row_bytes = image_to_gfa(img)
-    parts = ["^XA", "^CI28", f"^PW{max(img.width + x_offset, page_width or 0)}", f"^LL{img.height}", "^LH0,0"]
+    parts = ["^XA", "^CI28", "^MMC" if cut else "^MMT",
+             f"^PW{max(img.width + x_offset, page_width or 0)}", f"^LL{img.height}", "^LH0,0"]
     if darkness is not None:
         parts.append(f"~SD{darkness:02d}")
     if speed is not None:

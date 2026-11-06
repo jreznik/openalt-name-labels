@@ -75,6 +75,8 @@ def build_parser() -> argparse.ArgumentParser:
     out.add_argument("--darkness", type=int, choices=range(0, 31), metavar="0-30",
                      help="print darkness (~SD)")
     out.add_argument("--speed", type=int, help="print speed in ips (^PR)")
+    out.add_argument("--cut", action="store_true",
+                     help="cut after each label (^MMC); needs the optional cutter")
     out.add_argument("--preview", metavar="DIR", help="write PNG previews into DIR (no printing)")
     out.add_argument("--output", metavar="FILE", help="write ZPL to FILE instead of printing")
     sel = out.add_mutually_exclusive_group()
@@ -274,7 +276,8 @@ def main(argv: list[str] | None = None) -> int:
     offset_mm = args.offset_x if args.offset_x is not None else max(0.0, (HEAD_WIDTH_MM - args.width) / 2)
     x_off = mm_to_dots(offset_mm, args.dpi)
     head_dots = mm_to_dots(HEAD_WIDTH_MM, args.dpi)
-    zpl = b"".join(image_to_zpl(img, args.copies, args.darkness, args.speed, x_off, head_dots) for img in images)
+    zpl = b"".join(image_to_zpl(img, args.copies, args.darkness, args.speed, x_off, head_dots, args.cut)
+                   for img in images)
 
     if args.output:
         Path(args.output).write_bytes(zpl)

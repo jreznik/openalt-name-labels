@@ -75,6 +75,13 @@ def test_only_prints_selected_labels(monkeypatch, tmp_path, capsys):
     assert sent[0].count(b"^XA") == 2
 
 
+def test_cut_applies_to_every_label(monkeypatch, tmp_path, capsys):
+    labels = [Label(f"Person {i}", None, SPEAKER, str(i)) for i in range(1, 4)]
+    sent = setup(monkeypatch, tmp_path, labels)
+    assert cli.main(["--pretalx", "--cut", "-y"]) == 0
+    assert sent[0].count(b"^MMC") == 3 and b"^MMT" not in sent[0]
+
+
 def test_only_and_start_are_exclusive(monkeypatch, tmp_path, capsys):
     import pytest
     setup(monkeypatch, tmp_path)

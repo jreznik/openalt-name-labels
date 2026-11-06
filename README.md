@@ -251,6 +251,7 @@ The environment variables `PRETALX_URL` and `PRETALX_TOKEN`, and the options `--
 | `--start N` | 1 | start at the N-th label, e.g. to resume after a jam |
 | `--only LIST` | | print only these label numbers from the list, e.g. `9`, `3,9` or `12-14` |
 | `--copies N` | 1 | copies of each label |
+| `--cut` | off | cut after each label; needs the optional cutter. Without it, labels print in tear-off mode. **On a printer without a cutter this causes an "auto cutter jam" error, and you must switch the printer off and on again** (see [Troubleshooting](#troubleshooting)) |
 | `--force` | off | print even if the font lacks some characters |
 | `--no-wait` | off | don't wait for CUPS to finish the job |
 | `-P`, `--printer` | `XD5` | CUPS printer name (env `BADGE_PRINTER`) |
@@ -290,6 +291,7 @@ The environment variables `PRETALX_URL` and `PRETALX_TOKEN`, and the options `--
 | Text cut off or off-centre | Print `--grid` and check the label edges, then adjust `--width`, `--height` or `--offset-x`. |
 | Print runs over two labels, or the printer feeds without stopping | Calibrate (installation step 4). |
 | Too faint | Use `--darkness 20` or higher. |
+| "auto cutter jam" after using `--cut` | The printer has no cutter. Restarting alone may not clear the error, so: 1. Run `printf '^XA^MMT^XZ\n' \| lp -d XD5 -o raw` to switch back to tear-off mode; nothing prints. 2. If `lpstat -p XD5` shows the queue as disabled, run `cupsenable XD5`. 3. Switch the printer off and on again. 4. If labels now print across the gap, calibrate (installation step 4). |
 | "job … is still queued" | The printer is off, unplugged or out of labels. Fix it and the job continues by itself. `lpstat -p XD5` shows the state, and `cancel -a XD5` drops all jobs. |
 | "queue 'XD5' is disabled" | Run `cupsenable XD5 && cupsaccept XD5`. This happens with queues not created by `setup.sh`, which stop after any error. |
 
