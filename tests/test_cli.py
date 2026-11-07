@@ -82,6 +82,19 @@ def test_cut_applies_to_every_label(monkeypatch, tmp_path, capsys):
     assert sent[0].count(b"^MMC") == 3 and b"^MMT" not in sent[0]
 
 
+def test_subtitle_applies_to_given_names(monkeypatch):
+    monkeypatch.setattr(cli.config, "load", lambda path=None: config.Config(confirm=False))
+    args = cli.build_parser().parse_args(["AI hlásič zastávek", "--subtitle", "Tomáš Tichý"])
+    labels, _ = cli.collect_labels(args, config.Config())
+    assert [(lab.name, lab.subtitle) for lab in labels] == [("AI hlásič zastávek", "Tomáš Tichý")]
+
+
+def test_subtitle_rejected_with_fit(monkeypatch, tmp_path, capsys):
+    sent = setup(monkeypatch, tmp_path)
+    assert cli.main(["Ana", "--subtitle", "X", "--fit", "-y"]) == 2
+    assert "--fit" in capsys.readouterr().err and not sent
+
+
 def test_only_and_start_are_exclusive(monkeypatch, tmp_path, capsys):
     import pytest
     setup(monkeypatch, tmp_path)

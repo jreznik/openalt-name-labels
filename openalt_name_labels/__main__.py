@@ -43,6 +43,9 @@ def build_parser() -> argparse.ArgumentParser:
                           "required when the data contains both, so each run goes on the right badges")
     src.add_argument("--booth-copies", type=int, metavar="N",
                      help="labels per booth that lists no real people (default: config, else 2)")
+    src.add_argument("--subtitle", metavar="TEXT",
+                     help="smaller second line below names from the command line and files, "
+                          "e.g. a speaker under a talk title (Pretalx labels keep their own)")
     src.add_argument("--keep-duplicates", action="store_true",
                      help="print repeated names every time (default: once, and report the rest)")
 
@@ -102,7 +105,7 @@ def collect_labels(args: argparse.Namespace, cfg: config.Config) -> tuple[list[L
     names: list[str] = list(args.names)
     for f in args.file:
         names += sources.from_file(f, args.column)
-    labels = [Label(n) for n in names]
+    labels = [Label(n, args.subtitle or None) for n in names]
     if args.pretalx or args.pretalx_event:
         pc = cfg.pretalx
         event = args.pretalx_event or pc.event
@@ -187,6 +190,10 @@ def main(argv: list[str] | None = None) -> int:
             err(str(e))
             return 1
         return 0
+
+    if args.subtitle and args.fit:
+        err("--subtitle doesn't work with --fit, which has no room for a second line")
+        return 2
 
     try:
         cfg = config.load(args.config)

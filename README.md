@@ -237,6 +237,7 @@ The environment variables `PRETALX_URL` and `PRETALX_TOKEN`, and the options `--
 | `--pretalx-event`, `--pretalx-url` | config | override the config's event or URL |
 | `--pretalx-state` | config, else `confirmed,accepted` | submission states to include |
 | `--booth-copies N` | config, else 2 | labels per booth without real people |
+| `--subtitle TEXT` | | smaller second line under names from the command line or a file, e.g. `$L "AI hlásič zastávek" --subtitle "Tomáš Tichý"` for a schedule patch. Pretalx labels keep their own. Not with `--fit` |
 | `--keep-duplicates` | off | print repeated labels every time |
 | `--config FILE` | see above | use this config file |
 
