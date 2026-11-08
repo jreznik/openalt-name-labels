@@ -105,6 +105,20 @@ def test_regular_names_keep_original_size():
     assert abs((b - t) - (36.851 / 72 * 203 + 0.714 * 29.8879 / 72 * 203)) < 25
 
 
+def test_subtitle_size_changes_subtitle_height():
+    from openalt_name_labels.render import render_fixed
+    from PIL import ImageOps
+
+    def sub_height(pt):
+        img = render_fixed("Ana", 70, 30, 203, default_font(), 3, 29.8879, 36.851,
+                           subtitle="HHHH", subtitle_pt=pt)
+        bottom = ImageOps.invert(img.convert("L")).crop((0, img.height // 2, img.width, img.height))
+        l, t, r, b = bottom.getbbox()
+        return b - t
+
+    assert sub_height(7) < sub_height(11)
+
+
 def test_booth_label_has_subtitle_inside_label():
     from openalt_name_labels.render import render_fixed
     img = render_fixed("Martin Kolman", 70, 30, 203, default_font(), 3, 29.8879, 36.851,

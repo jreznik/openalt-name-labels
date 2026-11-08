@@ -46,6 +46,9 @@ def build_parser() -> argparse.ArgumentParser:
     src.add_argument("--subtitle", metavar="TEXT",
                      help="smaller second line below names from the command line and files, "
                           "e.g. a speaker under a talk title (Pretalx labels keep their own)")
+    src.add_argument("--subtitle-size", type=float, default=11.0, metavar="PT",
+                     help="type size of the subtitle line in pt (default: %(default)s); "
+                          "shrinks only if the line doesn't fit the label width")
     src.add_argument("--keep-duplicates", action="store_true",
                      help="print repeated names every time (default: once, and report the rest)")
 
@@ -269,7 +272,8 @@ def main(argv: list[str] | None = None) -> int:
                   for _, lab in numbered]
     else:
         images = [render_fixed(lab.name, args.width, args.height, args.dpi, font, args.margin,
-                               args.font_size, args.line_spacing, subtitle=lab.subtitle)
+                               args.font_size, args.line_spacing, subtitle=lab.subtitle,
+                               subtitle_pt=args.subtitle_size)
                   for _, lab in numbered]
 
     if args.preview:
