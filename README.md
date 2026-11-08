@@ -166,7 +166,18 @@ some-command | $L -f -                  # read names from stdin
 $L -f speakers.csv "Extra Guest"        # combine sources
 ```
 
-Names from files and the command line have no category. They print in the order given, as name-only labels. Repeated names are printed once; use `--keep-duplicates` to print every repeat, or `--copies N` for several copies of each label.
+Names from files and the command line have no category. They print in the order given, as name-only labels unless you add `--subtitle`. Repeated names are printed once; use `--keep-duplicates` to print every repeat, or `--copies N` for several copies of each label.
+
+### Schedule patches
+
+To stick a change over a printed schedule, put the talk title on the label and the speaker and time in the smaller line below it. A smaller title size leaves more room:
+
+```sh
+$L "NixOS Mobile na SDM845" --subtitle "Petr Hodina · 15:15–17:00" \
+   --font-size 20 --line-spacing 24.7 --copies 5
+```
+
+A long title shrinks to fit the label and can end up smaller than the line below it. If so, make that line smaller too, for example with `--subtitle-size 7`. Use `--preview out/` to check the result before printing several copies.
 
 ### What the tool checks
 
